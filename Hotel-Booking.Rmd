@@ -1,0 +1,318 @@
+---
+title: "Hotel Booking"
+author: "Saliu Fadlullah"
+date: "February 24, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+This dataset is a collection of data about some of the hotel bookings, and the goal is to predict if the bookings will be canceled or not (either 1 if the booking is canceled or 0 if the booking is not canceled). As you can see, we are going to use both categorical and continuous variables.
+```{r}
+# importing the libraries 
+library(readxl)
+library(tidyverse)
+library(zoo)
+library(caret)
+library(lattice)
+library(Metrics)
+library(mlbench)
+library(randomForest)
+library(caret)
+library(e1071)
+library(PerformanceAnalytics)
+library(tree)
+library(rpart)
+library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+library(caTools)
+```
+**The data cleaning process**
+When working with a real dataset we need to take into account the fact that some data might be missing or corrupted, therefore we need to prepare the dataset for our analysis. First step we load the csv data.
+```{r}
+# Loading of the data
+hotel1 <- read_csv("C:/Users/Professor Phrood/Documents/R/Project/H1.csv")
+hotel2 <- read_csv("C:/Users/Professor Phrood/Documents/R/Project/H2.csv")
+
+hotel <- rbind(hotel1,hotel2) #joining both h1 and h2 together
+view(hotel)
+```
+
+Now we need to check for missing values, look how many unique values there are for each variable and also drop none important variables.
+```{r}
+#dropping of some columns
+hotel = select(hotel , -c(Agent, Company,ReservationStatusDate,ReservationStatus)) 
+
+# To check for missing values
+sapply(hotel,function(x) sum(is.na(x)))
+
+# To check for numbers of unique values
+sapply(hotel, function(x) length(unique(x)))
+
+summary(hotel) 
+
+which(is.na(hotel)) # actual values of figures marked as NA 
+
+str(hotel) # to check for the structure of the data
+```
+Because the children variable has four missing values, we can use the statistical formular "median" to fill up the missing values.
+```{r}
+# dealing with the children variable
+child <- unique(hotel$Children) # check unique value for chirldren variable
+view(child)
+
+z <- child
+hotel$Children [is.na(hotel$Children)] <- median(z,na.rm = T) # fill all NA with the median under children variable
+view(hotel$Children)
+
+```
+# convert to factor datatype
+```{r}
+hotel$IsCanceled <- as.factor(hotel$IsCanceled)
+hotel$ArrivalDateMonth <- as.factor(hotel$ArrivalDateMonth)
+hotel$Meal <- as.factor(hotel$Meal)
+hotel$MarketSegment <- as.factor(hotel$MarketSegment)
+hotel$IsRepeatedGuest <- as.factor(hotel$IsRepeatedGuest)
+hotel$DistributionChannel <- as.factor(hotel$DistributionChannel)
+hotel$ReservedRoomType <- as.factor(hotel$ReservedRoomType)
+hotel$DepositType <- as.factor(hotel$DepositType)
+hotel$CustomerType <- as.factor(hotel$CustomerType)
+hotel$AssignedRoomType <- as.factor(hotel$AssignedRoomType)
+
+
+```
+
+#visualization
+```{r}
+par(mfrow=c(3,3))
+boxplot(LeadTime~IsCanceled,ylab = "LeadTime",xlab="IsCanceled",col="blue",data= hotel)
+barplot(xtabs(~IsCanceled + ArrivalDateYear,data = hotel),col = c("blue","black"), legend= c("canceled", "booked"),beside = T)
+barplot(xtabs(~IsCanceled + ArrivalDateMonth,data = hotel),col = c("blue","black"), legend= c("canceled", "booked"),beside = T)
+boxplot(Children ~IsCanceled,ylab = "Children",xlab="IsCanceled",col="light blue",data= hotel)
+boxplot(Babies~IsCanceled,ylab = "Babies",xlab="IsCanceled",col="orange",data= hotel)
+#boxplot(Country~IsCanceled,ylab = "Country",xlab="IsCanceled",col="orange",data= hotel)
+
+boxplot(PreviousCancellations ~IsCanceled,ylab = "PreviousCancellations",xlab="IsCanceled",col="violet",data= hotel)
+
+```
+#machine learning 
+We split the data into two chunks: training and testing set. The training set will be used to fit our model which we will be testing over the testing set.
+```{r}
+booking1 <- hotel[which(hotel$IsCanceled==1),]
+booking2 <- hotel[which(hotel$IsCanceled==0),]
+view(booking1)
+view(booking2)
+
+# set training data to 75% of the dataset to balance my pos and neg values
+training_set1 <- sample(1:nrow(booking1),0.75*nrow(booking1))
+training_set2 <- sample(1:nrow(booking2),0.75*nrow(booking2))
+view(training_set1)
+view(training_set2)
+
+#put both in dataframes
+train_1 <- booking1[training_set1, ]
+train_1
+train_2 <- booking2[training_set2, ]
+train_2
+
+trained_data <-  rbind(train_1,train_2) # combining both dataframe
+view(trained_data)
+
+
+```
+
+```{r}
+# create testing set 
+test1 <- booking1[-training_set1,]# contain 25% of those pos
+test2 <- booking2[-training_set2,]
+testingdata <- rbind(test1,test2)
+view(testingdata)
+```
+
+
+```{r}
+library(randomForest)
+set.seed(10)
+output_forest1 <- randomForest(IsCanceled~.,data = hotel)
+output_forest1
+
+```
+#FEATURE IMPORTANCE 
+```{r}
+RandomF <- randomForest:: importance(output_forest1)
+
+RandomF
+
+# Converting the result got into a data frame for visualizations
+RandomF_DF <- data.frame(Variables = row.names(RandomF), MeanDecreaseGini = RandomF[,1])
+RandomF_DF <- RandomF_DF[order(RandomF_DF$MeanDecreaseGini, decreasing = TRUE),]
+RandomF_DF
+```
+
+
+```{r}
+ggplot(RandomF_DF[1:20,], aes(x=reorder(Variables, MeanDecreaseGini), y=MeanDecreaseGini, fill=MeanDecreaseGini)) + geom_bar(stat = 'identity') + labs(x = 'Variables', y= '% of increase in MeanDecreaseGini if variable is randomly permuted') + coord_flip() + theme(legend.position="none")
+```
+from the above visualization,we can see that "DepositType" has more effect than all the other variables in the dataset
+
+for the purpose of creating the model,we will use variables with MeanDecreaseGini of 1000 and above
+
+```{r}
+##building the logistic regression models
+logistic_model1 <- glm(IsCanceled~LeadTime+DepositType+MarketSegment+ADR+TotalOfSpecialRequests+ArrivalDateDayOfMonth, data = trained_data, family = binomial(link = "logit"))
+
+summary(logistic_model1)
+```
+
+```{r}
+logistic_model2 <- glm(IsCanceled~LeadTime+DepositType+MarketSegment+ADR+TotalOfSpecialRequests+ArrivalDateDayOfMonth+ArrivalDateWeekNumber+ArrivalDateMonth, data = trained_data, family = binomial(link = "logit"))
+
+summary(logistic_model2)
+```
+predict scores and add to the data
+```{r}
+testingdata$predict<- predict(logistic_model2,testingdata)
+View(testingdata)
+```
+
+```{r}
+AIC(logistic_model2) #penalty for additional variable
+BIC(logistic_model2)
+```
+
+
+```{r}
+Pred <- predict(logistic_model2,testingdata,"link")
+head(Pred)
+```
+
+```{r}
+# create new class prediction column on the original dataset for side by side comparison
+testingdata$classpred <- ifelse(Pred>0,1,0)
+view(testingdata)
+```
+
+
+```{r}
+#PRACTICAL REAL TIME PREDICTION
+#Lets say a person books for a reservation and have a profile as below
+#now you want to predict the chances that the person will cancel his reservation
+guest<- data.frame(DepositType = "No Deposit", MarketSegment = "Corporate", ADR= 107.42, TotalOfSpecialRequests = 4,LeadTime = 200, ArrivalDateDayOfMonth = 25, ArrivalDateWeekNumber = 40 ,ArrivalDateMonth = "December")
+
+prediction<- predict(logistic_model2, guest)
+prediction
+guest$classpred <- ifelse(prediction>0, "1","0")
+view(guest)
+
+
+guest1<- data.frame(DepositType = "No Deposit", MarketSegment = "Direct", ADR= 95.42, TotalOfSpecialRequests = 7,LeadTime = 134, ArrivalDateDayOfMonth = 2, ArrivalDateWeekNumber = 12 ,ArrivalDateMonth = "July")
+
+prediction<- predict(logistic_model2, guest1)
+prediction
+guest1$classpred <- ifelse(prediction>0, "1","0")
+view(guest1)
+
+```
+
+# Randomforest
+Now, we will create a Random Forest model with default parameters and then we will fine tune the model by changing 'mtry'. We can tune the random forest model by changing the number of trees (ntree) and the number of variables randomly sampled at each stage (mtry). According to Random Forest package description:
+
+Ntree: Number of trees to grow. This should not be set to too small a number, to ensure that every input row gets predicted at least a few times.
+
+Mtry: Number of variables randomly sampled as candidates at each split.
+```{r}
+Model1 <-  randomForest(IsCanceled~.,data = trained_data,importance=T)
+Model1
+```
+By default, number of trees is 500 and number of variables tried at each split is 5 in this case. Error rate is 11.08%.
+```{r}
+Model2 <- randomForest(IsCanceled~.,data = trained_data,ntree=500,mtry=9,importance=T)
+Model2
+```
+When we have increased the mtry to 9 from 5, error rate has reduced from 11.08% to 11.01%. We will now predict on the train dataset.
+```{r}
+#predict on the train data
+predtrain <- predict(Model2,trained_data,type = "class")
+predtrain
+```
+
+```{r}
+# check classifcation accuracy
+table(predtrain,trained_data$IsCanceled)
+mean(predtrain == trained_data$IsCanceled) 
+```
+In case of prediction on trained dataset, the data are misclassified and the mean accuracy is 99.64%.
+
+```{r}
+# To check important variable
+randomForest::importance(Model2)        
+varImpPlot(Model2)  
+```
+
+
+# Decision tree 
+```{r}
+treemodel1 = tree(IsCanceled~., data = trained_data)
+summary(treemodel1)
+```
+
+```{r}
+par(mfrow = c(1,1))
+plot(treemodel1)
+text(treemodel1, pretty = 0)
+```
+
+```{r}
+treemodel2 <- rpart (IsCanceled~., data = trained_data)
+summary(treemodel2) 
+fancyRpartPlot(treemodel2)
+```
+#The algorithm splits the data set into 10 separate (test and training data sets). nsplit value at the least x-error is what determines at what point the tree will be pruned.
+
+#Decision trees are likely to have issues of overfitting because of cross validation and the several number of times it trains based on the number of splits.
+
+#Bias is the difference between the average prediction of our model and the correct value which we are trying to predict. Model with high bias pays very little attention to the training data and oversimplifies the model. It always leads to high error on training and test data.
+
+#Variance is the variabilty of model predicition for a given data point or a value which tells us the spread of our data, Models with high variance pays a lot of attention to training data and does not generalize on the data which it hasnt seen before.
+
+#decision tree has high variance and low bias. 
+
+#choosing between high variance, low bias and low variance, high bias is what is referred to as the BIAS-VARIANCE TRADE OFF
+
+#Cross validation error (xerror)
+
+PRUNNING
+validation of decision tree using the "complexity parameter" and cross validated error.
+
+This helps to decide the point to stop the training to avoid high variance and overfitting.
+
+printcp(x) where x is the rpart object.
+
+this function provides the optimal prunnings based on the cp value. we prune the tree to avoid any overfitting of the data.
+The convention is to have a small tree and the one with least cross validated error given.
+```{r}
+printcp(treemodel2)
+```
+
+```{r}
+ptree <- prune(treemodel2, + treemodel2$cptable[which.min(treemodel2$cptable[,"xerror"]), "CP"])
+summary(ptree)
+fancyRpartPlot(ptree,uniform = T, main = 'Pruned Classification')
+```
+
+```{r}
+treepred = predict(treemodel1,testingdata,type = "class")
+view(treepred)
+```
+```{r}
+confusionMatrix(treepred, testingdata$IsCanceled)
+```
+# Check the Actual predicted responses
+```{r}
+pred_result <- cbind(testingdata,treepred)
+view(pred_result)
+```
+
+
